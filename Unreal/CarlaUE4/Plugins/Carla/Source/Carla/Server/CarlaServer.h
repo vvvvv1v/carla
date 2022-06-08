@@ -18,7 +18,6 @@
 
 class UCarlaEpisode;
 
-
 class FCarlaServer
 {
 public:
