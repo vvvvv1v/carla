@@ -58,8 +58,9 @@ class BasicAgent(object):
         self._target_speed = target_speed
         self._sampling_resolution = 2.0
         self._base_tlight_threshold = 5.0  # meters
-        self._base_vehicle_threshold = 5.0  # meters
+        self._base_vehicle_threshold = 6.0  # meters
         self._max_brake = 0.5
+        self._offset = 0
 
         # Change parameters according to the dictionary
         opt_dict['target_speed'] = target_speed
@@ -77,6 +78,10 @@ class BasicAgent(object):
             self._base_vehicle_threshold = opt_dict['base_vehicle_threshold']
         if 'max_brake' in opt_dict:
             self._max_steering = opt_dict['max_brake']
+
+        # Offset might make the vehicle collide with adjacent lanes, so collision detection must change
+        if 'offset' in opt_dict:
+            self._offset = opt_dict['offset']
 
         # Initialize the planners
         self._local_planner = LocalPlanner(self._vehicle, opt_dict=opt_dict, map_inst=self._map)
@@ -326,12 +331,15 @@ class BasicAgent(object):
 
         # Get the transform of the front of the ego
         ego_forward_vector = ego_transform.get_forward_vector()
-        ego_extent = self._vehicle.bounding_box.extent.x
+        ego_extent_x = self._vehicle.bounding_box.extent.x
+        ego_extent_y = self._vehicle.bounding_box.extent.y
         ego_front_transform = ego_transform
         ego_front_transform.location += carla.Location(
-            x=ego_extent * ego_forward_vector.x,
-            y=ego_extent * ego_forward_vector.y,
+            x=ego_extent_x * ego_forward_vector.x,
+            y=ego_extent_x * ego_forward_vector.y,
         )
+
+        side_lane_invasion = abs(self._offset) + ego_extent_y > ego_wpt.lane_width / 2
 
         for target_vehicle in vehicle_list:
             target_transform = target_vehicle.get_transform()
@@ -341,7 +349,7 @@ class BasicAgent(object):
             target_wpt = self._map.get_waypoint(target_transform.location, lane_type=carla.LaneType.Any)
 
             # Simplified version for outside junctions
-            if not ego_wpt.is_junction or not target_wpt.is_junction:
+            if not side_lane_invasion and not ego_wpt.is_junction and not target_wpt.is_junction:
 
                 if target_wpt.road_id != ego_wpt.road_id or target_wpt.lane_id != ego_wpt.lane_id  + lane_offset:
                     next_wpt = self._local_planner.get_incoming_waypoint_and_direction(steps=3)[0]
@@ -377,8 +385,12 @@ class BasicAgent(object):
                         break
 
                     r_vec = wp.transform.get_right_vector()
-                    p1 = wp.transform.location + carla.Location(extent_y * r_vec.x, extent_y * r_vec.y)
-                    p2 = wp.transform.location + carla.Location(-extent_y * r_vec.x, -extent_y * r_vec.y)
+                    loc = wp.transform.location
+                    if self._offset:
+                        loc += carla.Location(self._offset*r_vec.x, self._offset*r_vec.y, self._offset*r_vec.z)
+
+                    p1 = loc + carla.Location(extent_y * r_vec.x, extent_y * r_vec.y)
+                    p2 = loc + carla.Location(-extent_y * r_vec.x, -extent_y * r_vec.y)
                     route_bb.append([p1.x, p1.y, p1.z])
                     route_bb.append([p2.x, p2.y, p2.z])
 
